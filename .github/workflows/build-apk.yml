@@ -11,72 +11,55 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Find project ZIP
+        id: findzip
+        run: |
+          if [ -f "JioTVPlus_Mobile_Fix_v3.zip" ]; then
+            echo "zip=JioTVPlus_Mobile_Fix_v3.zip" >> "$GITHUB_OUTPUT"
+          elif [ -f "JioTVPlus_Simple_Select_CRASHFIX_v2.zip" ]; then
+            echo "zip=JioTVPlus_Simple_Select_CRASHFIX_v2.zip" >> "$GITHUB_OUTPUT"
+          elif [ -f "JioTVPlus_Simple_Select_FIXED.zip" ]; then
+            echo "zip=JioTVPlus_Simple_Select_FIXED.zip" >> "$GITHUB_OUTPUT"
+          else
+            echo "No supported project ZIP found"
+            exit 1
+          fi
+
+      - name: Extract project
+        run: |
+          mkdir app-source
+          unzip -q "${{ steps.findzip.outputs.zip }}" -d app-source
+          find app-source -name gradlew -type f
+
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Install Android SDK packages
-        shell: bash
+      - name: Build APK
         run: |
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found under $ANDROID_HOME/cmdline-tools"
+          cd app-source
+          GRADLEW=$(find . -name gradlew -type f | head -n 1)
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew not found in ZIP"
             exit 1
           fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Find project ZIP
-        shell: bash
-        run: |
-          if [ -f "JioTVPlus_Simple_Select_FIXED.zip" ]; then
-            echo "PROJECT_ZIP=JioTVPlus_Simple_Select_FIXED.zip" >> "$GITHUB_ENV"
-          elif [ -f "JioTVPlus_Simple_Select.zip" ]; then
-            echo "PROJECT_ZIP=JioTVPlus_Simple_Select.zip" >> "$GITHUB_ENV"
-          else
-            echo "ERROR: No project ZIP found in repository root."
-            echo "Upload either JioTVPlus_Simple_Select_FIXED.zip or JioTVPlus_Simple_Select.zip."
-            ls -la
-            exit 1
-          fi
-
-      - name: Extract project ZIP and locate Android project
-        shell: bash
-        run: |
-          mkdir -p source
-          unzip -q "$PROJECT_ZIP" -d source
-          PROJECT_DIR="$(find source -type f -path '*/app/build.gradle' -print -quit | sed 's#/app/build.gradle$##')"
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: app/build.gradle was not found inside the ZIP."
-            find source -maxdepth 5 -type f | head -100
-            exit 1
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Android project at: $PROJECT_DIR"
-
-      - name: Build debug APK
-        shell: bash
-        run: gradle --no-daemon -p "$PROJECT_DIR" assembleDebug --stacktrace
+          chmod +x "$GRADLEW"
+          cd "$(dirname "$GRADLEW")"
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Jio-TV-Plus-debug-APK
-          path: source/**/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-          
+          path: app-source/**/build/outputs/apk/debug/*.apk
